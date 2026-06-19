@@ -1,82 +1,61 @@
 const express = require("express");
-const multer = require("multer")
+const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("../cloudnaryConfig.js");
-
-
-
-
-// Set up Cloudinary storage
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "faculty-images", // Folder in your Cloudinary account
-    allowed_formats: ["jpg", "jpeg", "png"], // Allowed image formats
-  },
-});
-
-// Configure Multer to use Cloudinary storage
-const upload = multer({ storage });
-
+const { verifyToken } = require("../middleware/authMiddleware"); // Import auth middleware
 
 const {
   addFaculty,
   updateFaculty,
-getTodayTimetableByFacultyId,
+  getTodayTimetableByFacultyId,
   getAllFaculty,
   getFacultyById,
   deleteFaculty,
   getFacultyTimetable,
   updateFacultyTimetable,
- getExactPeriodsForSubject,
- getFacultiesByDepartment,
- getFacultyUniqueCombinationsFor7Days,
+  getExactPeriodsForSubject,
+  getFacultiesByDepartment,
+  getFacultyUniqueCombinationsFor7Days,
   loginFaculty,
- loginAdmin,
- addFacultyProfile,
- getFacultyByFacultyId,
- getTimetableByFacultyId,
- getAllFacultyProfiles,
- getFacultyProfileByLoginId,
- deleteFacultyByFacultyId
+  getFacultyByFacultyId,
+  getTimetableByFacultyId,
+  deleteFacultyByFacultyId
 } = require("../controllers/FacultyController");
 
 const router = express.Router();
 
-router.post("/Adminlogin", loginAdmin);
- 
-//admin details
-router.post("/addfacultyprofile", upload.single("image"), addFacultyProfile);
+// Set up Cloudinary storage
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "faculty-images",
+    allowed_formats: ["jpg", "jpeg", "png"],
+  },
+});
 
+const upload = multer({ storage });
 
-// Routes
-// Routes admin
-router.get("/facultyprofiles", getAllFacultyProfiles);
-router.get("/facultyprofile/:loginId", getFacultyProfileByLoginId);
-
-router.post("/addfaculty", upload.single("image"), addFaculty);
-router.put("/update/:id", upload.single("image"), updateFaculty);
-router.get("/:facultyId/timetable-today", getTodayTimetableByFacultyId);
-router.get("/getfaculty", getAllFaculty);
-router.get("/:id", getFacultyById);
-router.delete("/:id", deleteFaculty);
-router.get("/:id/timetable", getFacultyTimetable);
-router.put("/:id/timetable", updateFacultyTimetable);
+// Public Route
 router.post("/login", loginFaculty);
-router.get("/department/:department",getFacultiesByDepartment);
-router.get(
-  "/:facultyId/unique",
-getFacultyUniqueCombinationsFor7Days
-);
-router.get('/facultyId/:facultyId',getFacultyByFacultyId);
 
-router.delete("/delete/:facultyId", deleteFacultyByFacultyId);
+// Admin Only Routes
+router.post("/addfaculty", verifyToken(["admin"]), upload.single("image"), addFaculty);
+router.put("/update/:id", verifyToken(["admin"]), upload.single("image"), updateFaculty);
+router.delete("/:id", verifyToken(["admin"]), deleteFaculty);
+router.delete("/delete/:facultyId", verifyToken(["admin"]), deleteFacultyByFacultyId);
 
-// New route to get periods for a subject
-router.get(
-  "/:facultyId/:department/:section/:subject",
-  getExactPeriodsForSubject
-);
-router.get("/facultyId/:facultyId/timetable", getTimetableByFacultyId);
+// Admin & Faculty Routes
+router.put("/:id/timetable", verifyToken(["admin", "faculty"]), updateFacultyTimetable);
+
+// General Authenticated Routes (Admins, Faculty, Students)
+router.get("/:facultyId/timetable-today", verifyToken(), getTodayTimetableByFacultyId);
+router.get("/getfaculty", verifyToken(), getAllFaculty);
+router.get("/:id", verifyToken(), getFacultyById);
+router.get("/:id/timetable", verifyToken(), getFacultyTimetable);
+router.get("/department/:department", verifyToken(), getFacultiesByDepartment);
+router.get("/:facultyId/unique", verifyToken(), getFacultyUniqueCombinationsFor7Days);
+router.get('/facultyId/:facultyId', verifyToken(), getFacultyByFacultyId);
+router.get("/:facultyId/:department/:section/:subject", verifyToken(), getExactPeriodsForSubject);
+router.get("/facultyId/:facultyId/timetable", verifyToken(), getTimetableByFacultyId);
 
 module.exports = router;
