@@ -1,64 +1,46 @@
 const express = require("express");
+const { verifyToken } = require("../middleware/authMiddleware"); // Import auth middleware
 const {  
   markAttendance,
   fetchAttendance,
   checkAttendance,
-   fetchAttendanceByDate,
+  fetchAttendanceByDate,
   fetchAttendanceBySubject,
   getMarkedSubjects,
- getStudentAttendance, 
+  getStudentAttendance, 
   getSectionOverallAttendance,
   grantEditPermission,
   checkEditPermission,
-getStudentAttendanceWithSubjects,
+  getStudentAttendanceWithSubjects,
   fetchAllEditPermissions,
   deleteEditPermission,
   getAbsentStudentsForToday,
   getSectionAttendanceSummaryForAllDates,
-   fetchAttendanceByFilters
+  fetchAttendanceByFilters
 } = require("../controllers/AttendanceController");
 
 const router = express.Router();
 
-/**
- * @route   POST /Attendance/mark-attendance
- * @desc    Mark attendance for a specific date, year, department, and section
- * @access  Public
- */
-// Route to fetch absentees for today
-router.get("/absentees-today", getAbsentStudentsForToday);
+// Admin Only Routes
+router.post("/grantEditPermission", verifyToken(["admin"]), grantEditPermission);
+router.delete('/permissions/:id', verifyToken(["admin"]), deleteEditPermission);
+router.get('/edit-permissions', verifyToken(["admin"]), fetchAllEditPermissions);
 
-router.post("/mark-attendance", markAttendance);
-// Route to get section-wise attendance summary for all dates
-router.get("/section-summary-all", getSectionAttendanceSummaryForAllDates);
+// Faculty & Admin Routes
+router.post("/mark-attendance", verifyToken(["admin", "faculty"]), markAttendance);
+router.get("/checkEditPermission", verifyToken(["admin", "faculty"]), checkEditPermission);
 
-/**
- * @route   GET /Attendance/fetch-attendance
- * @desc    Fetch attendance records for a specific date, year, department, and section
- * @access  Public
- */
-router.get("/fetch-attendance", fetchAttendance);
-router.get("/date",fetchAttendanceByDate)
-/**
- * @route   GET /Attendance/check-attendance
- * @desc    Check if attendance is already marked for a specific date, year, department, and section
- * @access  Public
- */
-router.get('/edit-permissions', fetchAllEditPermissions);
-// Route to get student attendance with subjects
-router.get("/subjects/:studentId", getStudentAttendanceWithSubjects);
+// General Authenticated Routes (Admins, Faculty, and Students viewing their own data)
+router.get("/absentees-today", verifyToken(), getAbsentStudentsForToday);
+router.get("/section-summary-all", verifyToken(), getSectionAttendanceSummaryForAllDates);
+router.get("/fetch-attendance", verifyToken(), fetchAttendance);
+router.get("/date", verifyToken(), fetchAttendanceByDate);
+router.get("/subjects/:studentId", verifyToken(), getStudentAttendanceWithSubjects);
+router.get("/check", verifyToken(), checkAttendance);
+router.get("/filters", verifyToken(), fetchAttendanceByFilters);
+router.get("/fetch-records", verifyToken(), fetchAttendanceBySubject);
+router.get("/marked-subjects", verifyToken(), getMarkedSubjects);
+router.get("/student-record", verifyToken(), getStudentAttendance);
+router.get("/section-record", verifyToken(), getSectionOverallAttendance);
 
-router.delete('/permissions/:id', deleteEditPermission);
-
-// Add the DELETE route for deleting permissions
-
-router.post("/grantEditPermission", grantEditPermission);
-router.get("/checkEditPermission", checkEditPermission);
-router.get("/check", checkAttendance);
-router.get("/filters", fetchAttendanceByFilters);
-// Route to fetch attendance by subject and periods
-router.get("/fetch-records", fetchAttendanceBySubject);
-router.get("/marked-subjects", getMarkedSubjects);
-router.get("/student-record",getStudentAttendance );
-router.get("/section-record", getSectionOverallAttendance);
 module.exports = router;
