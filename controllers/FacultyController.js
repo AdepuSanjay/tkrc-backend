@@ -1,128 +1,7 @@
 const Faculty = require("../models/facultymodel");
 const bcrypt = require("bcryptjs");
 const path = require("path");
-const FacultyProfile = require("../models/admin"); 
- 
-const loginAdmin= async (req, res) => {
-  try {
-    const { loginId, password } = req.body;
-
-    if (!loginId || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Login ID and password are required",
-      });
-    }
-
-    const faculty = await FacultyProfile.findOne({ loginId });
-
-    if (!faculty) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials: Faculty not found",
-      });
-    }
-
-    // Compare passwords
-    const isMatch = await bcrypt.compare(password, faculty.password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials: Incorrect password",
-      });
-    }
-
-    // Successful login
-    res.status(200).json({
-      success: true,
-      message: "Login successful",
-      faculty: {
-        id: faculty._id,
-        name: faculty.name,
-        role: faculty.role,
-        department: faculty.department,
-      },
-    });
-  } catch (error) {
-    console.error("Error during login:", error.message);
-    res.status(500).json({
-      success: false,
-      message: "Error during login",
-      error: error.message,
-    });
-  }
-};
-
-
-
-
-
-const addFacultyProfile = async (req, res) => {    
-  try {  
-    const {   
-      loginId, password, role, designation, department, name,   
-      qualification, areaOfInterest, jntuId, yearsOfExperience   
-    } = req.body;  
-
-    if (!loginId || !password || !role || !designation || !department || !name ||  
-        !qualification || !areaOfInterest || !jntuId || !yearsOfExperience) {  
-      return res.status(400).json({ message: "All fields are required" });  
-    }  
-
-    const hashedPassword = await bcrypt.hash(password, 10);  
-    const imagePath = req.file ? req.file.path : null;  
-
-    const newFaculty = new FacultyProfile({  
-      loginId,  
-      password: hashedPassword,  
-      role,  
-      designation,  
-      department,  
-      name,  
-      qualification,  
-      areaOfInterest,  
-      jntuId,  
-      yearsOfExperience,  
-      image: imagePath  
-    });  
-
-    await newFaculty.save();  
-
-    res.status(201).json({ message: "Faculty profile added successfully", faculty: newFaculty });  
-  } catch (error) {  
-    console.error("Error in addFacultyProfile:", error.message);  
-    res.status(500).json({ message: "Error adding faculty profile", error: error.message });  
-  }  
-};  
-
-
-// Get all faculty profiles
-const getAllFacultyProfiles = async (req, res) => {
-  try {
-    const facultyProfiles = await FacultyProfile.find();
-    res.status(200).json(facultyProfiles);
-  } catch (error) {
-    console.error("Error in getAllFacultyProfiles:", error.message);
-    res.status(500).json({ message: "Error fetching faculty profiles", error: error.message });
-  }
-};
-
-// Get faculty profile by loginId
-const getFacultyProfileByLoginId = async (req, res) => {
-  try {
-    const { loginId } = req.params;
-    const facultyProfile = await FacultyProfile.findOne({ loginId });
-
-    if (!facultyProfile) {
-      return res.status(404).json({ message: "Faculty profile not found" });
-    }
-
-    res.status(200).json(facultyProfile);
-  } catch (error) {
-    console.error("Error in getFacultyProfileByLoginId:", error.message);
-    res.status(500).json({ message: "Error fetching faculty profile", error: error.message });
-  }
-};
+const jwt = require("jsonwebtoken"); // Added for authentication
 
 const addFaculty = async (req, res) => {  
   try {
@@ -171,7 +50,6 @@ const addFaculty = async (req, res) => {
   }
 };
 
-
 const getFacultyUniqueCombinationsFor7Days = async (req, res) => {
   try {
     const { facultyId } = req.params;
@@ -209,7 +87,6 @@ const getFacultyUniqueCombinationsFor7Days = async (req, res) => {
     });
   }
 };
-
 
 const getCurrentDay = () => {
   const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -264,7 +141,6 @@ const getTodayTimetableByFacultyId = async (req, res) => {
   }
 };
 
-
 // Update faculty (with image upload)
 const updateFaculty = async (req, res) => {
   try {
@@ -303,8 +179,7 @@ const updateFaculty = async (req, res) => {
   }
 };
 
-// Login faculty
-
+// Login faculty (Updated with JWT)
 const loginFaculty = async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -325,7 +200,7 @@ const loginFaculty = async (req, res) => {
       });
     }
 
-    // Compare passwords (this is within an async function)
+    // Compare passwords
     const isMatch = await bcrypt.compare(password, faculty.password);
 
     if (!isMatch) {
@@ -335,10 +210,22 @@ const loginFaculty = async (req, res) => {
       });
     }
 
+    // Generate JWT Token
+    const token = jwt.sign(
+      { 
+        id: faculty._id, 
+        role: faculty.role || "faculty", 
+        facultyId: faculty.facultyId 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
     // Successful login
     res.status(200).json({
       success: true,
       message: "Login successful",
+      token, // Send token to frontend
       faculty: {
         id: faculty._id,
         name: faculty.name,
@@ -355,8 +242,6 @@ const loginFaculty = async (req, res) => {
     });
   }
 };
-
-
 
 // Get a faculty by ID (including image)
 const getFacultyById = async (req, res) => {
@@ -463,7 +348,7 @@ const updateFacultyTimetable = async (req, res) => {
   }
 };
 
-const getExactPeriodsForSubject= async (req, res) => {
+const getExactPeriodsForSubject = async (req, res) => {
   try {
     const { facultyId, department, section, subject } = req.params;
 
@@ -514,7 +399,6 @@ const getExactPeriodsForSubject= async (req, res) => {
   }
 };
 
-
 const getFacultiesByDepartment = async (req, res) => {
   try {
     const { department } = req.params;
@@ -536,6 +420,7 @@ const getFacultiesByDepartment = async (req, res) => {
     res.status(500).json({ message: "Error fetching faculties", error: error.message });
   }
 };
+
 const deleteFacultyByFacultyId = async (req, res) => {
   try {
     const { facultyId } = req.params;
@@ -552,6 +437,7 @@ const deleteFacultyByFacultyId = async (req, res) => {
     res.status(500).json({ message: "Error deleting faculty", error: error.message });
   }
 };
+
 const getFacultyByFacultyId = async (req, res) => {
   try {
     const { facultyId } = req.params;
@@ -570,7 +456,9 @@ const getFacultyByFacultyId = async (req, res) => {
       message: "Error fetching faculty",
       error: error.message,
     });
-  }}
+  }
+};
+
 const getTimetableByFacultyId = async (req, res) => {
   try {
     const { facultyId } = req.params;
@@ -600,9 +488,7 @@ const getTimetableByFacultyId = async (req, res) => {
   }
 };
 
-
 module.exports = {
-  
   addFaculty,
   getAllFaculty,
   getFacultyById,
@@ -611,15 +497,11 @@ module.exports = {
   getFacultyTimetable,
   updateFacultyTimetable,
   loginFaculty,
-    getFacultyUniqueCombinationsFor7Days,
-    getExactPeriodsForSubject,
-      getFacultiesByDepartment,
-       deleteFacultyByFacultyId,
-       getFacultyByFacultyId,
-       getTimetableByFacultyId,
-  addFacultyProfile,
-  getFacultyProfileByLoginId,
-  getAllFacultyProfiles,
-  loginAdmin,
- getTodayTimetableByFacultyId
+  getFacultyUniqueCombinationsFor7Days,
+  getExactPeriodsForSubject,
+  getFacultiesByDepartment,
+  deleteFacultyByFacultyId,
+  getFacultyByFacultyId,
+  getTimetableByFacultyId,
+  getTodayTimetableByFacultyId
 };
