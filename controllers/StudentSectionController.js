@@ -1,7 +1,9 @@
 const Year = require("../models/studentSection");
-const path =require("path");
-const mongoose=require('mongoose');
+const path = require("path");
+const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken"); // Added JWT for secure authentication
+
 // Get students in a section 
 const getStudentsBySection = async (req, res) => {
   try {
@@ -21,8 +23,6 @@ const getStudentsBySection = async (req, res) => {
     res.status(500).json({ message: "Error fetching students", error });
   }
 };
-
-
 
 const getSubjectsByDate = async (req, res) => {
   try {
@@ -93,8 +93,6 @@ const getSubjectsByDate = async (req, res) => {
   }
 };
 
-
-
 // Add multiple students to a section
 const addStudentsToSection = async (req, res) => {
   try {
@@ -120,29 +118,29 @@ const addStudentsToSection = async (req, res) => {
     if (!section) return res.status(404).json({ message: "Section not found" });
 
     for (const student of students) {
-  const { rollNumber, name, fatherName, password, role, mobileNumber, fatherMobileNumber } = student;
+      const { rollNumber, name, fatherName, password, role, mobileNumber, fatherMobileNumber } = student;
 
-  if (!rollNumber || !name || !password || !mobileNumber) {
-    console.error("Missing required fields in student:", student);
-    return res.status(400).json({ message: "Each student must have a rollNumber, name, password, and mobile number." });
-  }
-
-  console.log("Adding student:", { rollNumber, name, mobileNumber }); // Debug log
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-  const imagePath = req.file ? req.file.path : null;
-
-  section.students.push({
-  rollNumber,
-  name,
-  fatherName: fatherName || null,
-  password: hashedPassword,
-  role: role || "student",
-  image: imagePath,
-  mobileNumber: String(mobileNumber),  // ✅ Ensure it's a string
-  fatherMobileNumber: fatherMobileNumber ? String(fatherMobileNumber) : null
-});
+      if (!rollNumber || !name || !password || !mobileNumber) {
+        console.error("Missing required fields in student:", student);
+        return res.status(400).json({ message: "Each student must have a rollNumber, name, password, and mobile number." });
       }
+
+      console.log("Adding student:", { rollNumber, name, mobileNumber }); // Debug log
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const imagePath = req.file ? req.file.path : null;
+
+      section.students.push({
+        rollNumber,
+        name,
+        fatherName: fatherName || null,
+        password: hashedPassword,
+        role: role || "student",
+        image: imagePath,
+        mobileNumber: String(mobileNumber),  // ✅ Ensure it's a string
+        fatherMobileNumber: fatherMobileNumber ? String(fatherMobileNumber) : null
+      });
+    }
     await year.save();
     res.status(201).json({ message: "Students added successfully", section });
   } catch (error) {
@@ -150,7 +148,6 @@ const addStudentsToSection = async (req, res) => {
     res.status(500).json({ message: "Error adding students", error: error.message });
   }
 };
-
 
 // Add or update a timetable for a section
 const upsertSectionTimetable = async (req, res) => {
@@ -250,11 +247,7 @@ const addSectionToDepartment = async (req, res) => {
   }
 };
 
-
-//login student
-
-
-
+// Login student (Updated to return a JWT Token)
 const loginStudent = async (req, res) => {
   try {
     const { rollNumber, password } = req.body;
@@ -318,10 +311,22 @@ const loginStudent = async (req, res) => {
       });
     }
 
+    // Generate JWT Token for Student
+    const token = jwt.sign(
+      { 
+        id: student._id, 
+        role: student.role || "student", 
+        rollNumber: student.rollNumber 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" } // Students get a 7-day token
+    );
+
     // Successful login
     res.status(200).json({
       success: true,
       message: "Login successful",
+      token, // Send token back to the frontend
       student: {
         id: student._id,
         name: student.name,
@@ -382,9 +387,6 @@ const addTimetable = async (req, res) => {
   }
 };
 
-// Get timetable for a section
-
-
 // Delete timetable for a section
 const deleteTimetable = async (req, res) => {
   try {
@@ -433,9 +435,6 @@ const getSectionTimetable = async (req, res) => {
   }
 };
 
-
-                                         
-
 const getStudentByRollNumber = async (req, res) => {
   try {
     const { rollNumber } = req.params;
@@ -476,20 +475,20 @@ const getStudentByRollNumber = async (req, res) => {
     }
 
     res.status(200).json({
-  student: {
-    id: student._id,
-    name: student.name,
-    rollNumber: student.rollNumber,
-    fatherName: student.fatherName || null,
-    role: student.role,
-    year,
-    department,
-    section,
-    image: student.image || null,
-    mobileNumber: student.mobileNumber,
-    fatherMobileNumber: student.fatherMobileNumber || null,
-  },
-});
+      student: {
+        id: student._id,
+        name: student.name,
+        rollNumber: student.rollNumber,
+        fatherName: student.fatherName || null,
+        role: student.role,
+        year,
+        department,
+        section,
+        image: student.image || null,
+        mobileNumber: student.mobileNumber,
+        fatherMobileNumber: student.fatherMobileNumber || null,
+      },
+    });
   } catch (error) {
     console.error("Error fetching student details:", error.message);
     res.status(500).json({ message: "Error fetching student details", error: error.message });
@@ -565,10 +564,12 @@ module.exports = {
   addYear,
   addDepartmentToYear,
   addSectionToDepartment,
-getSubjectsByDate,
+  getSubjectsByDate,
   deleteAllStudentsInSection,
   getSectionTimetable,
   deleteStudentByRollNumber,
   getStudentByRollNumber,
-  loginStudent
+  loginStudent,
+  addTimetable,
+  deleteTimetable
 };
