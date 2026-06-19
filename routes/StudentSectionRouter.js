@@ -2,53 +2,40 @@ const express = require('express');
 const router = express.Router();
 
 const studentController = require('../controllers/StudentSectionController');
-const multer = require("multer")
+const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("../cloudnaryConfig.js");
- 
+const { verifyToken } = require("../middleware/authMiddleware"); // Import auth middleware
+
 // Set up Cloudinary storage
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: "Students", // Folder in your Cloudinary account
-    allowed_formats: ["jpg", "jpeg", "png"], // Allowed image formats
+    folder: "Students",
+    allowed_formats: ["jpg", "jpeg", "png"],
   },
 });
 
-// Configure Multer to use Cloudinary storage
 const upload = multer({ storage });
 
+// Public Route
+router.post('/login', studentController.loginStudent);
 
-// Add Year
-router.post('/years', studentController.addYear);
+// Admin Only Routes (Structure Creation & Deletion)
+router.post('/years', verifyToken(["admin"]), studentController.addYear);
+router.post('/:yearId/departments', verifyToken(["admin"]), studentController.addDepartmentToYear);
+router.post('/:yearId/:departmentId/sections', verifyToken(["admin"]), studentController.addSectionToDepartment);
+router.post('/:yearId/:departmentId/:sectionId/students', verifyToken(["admin"]), upload.single("image"), studentController.addStudentsToSection);
+router.delete('/students/:rollNumber', verifyToken(["admin"]), studentController.deleteStudentByRollNumber);
+router.delete('/:yearId/:departmentId/:sectionId/students', verifyToken(["admin"]), studentController.deleteAllStudentsInSection);
 
-router.get('/subjects-day/:yearId/:departmentId/:sectionId/:date', studentController.getSubjectsByDate);
+// Admin & Faculty Routes
+router.post('/:yearId/:departmentId/:sectionId/timetable', verifyToken(["admin", "faculty"]), studentController.upsertSectionTimetable);
 
-
-// Add Department to a Year
-router.post('/:yearId/departments', studentController.addDepartmentToYear);
-
-// Add Section to a Department
-router.post('/:yearId/:departmentId/sections', studentController.addSectionToDepartment);
-
-
-router.get('/:rollNumber',studentController.getStudentByRollNumber);
-// Add Students to a Section
-router.post('/:yearId/:departmentId/:sectionId/students',upload.single("image"),studentController.addStudentsToSection);
-
-// Get Students in a Section
-router.get('/:yearId/:departmentId/:sectionId/students', studentController.getStudentsBySection);
-
-router.get("/:yearId/:departmentId/:sectionId/timetable", studentController.getSectionTimetable);
-// Add or Update Timetable for a Section
-router.post('/:yearId/:departmentId/:sectionId/timetable', studentController.upsertSectionTimetable);
-router.post('/login',studentController.loginStudent);
-
-
-// Delete a student by roll number
-router.delete('/students/:rollNumber', studentController.deleteStudentByRollNumber);
-
-// Delete all students from a section
-router.delete('/:yearId/:departmentId/:sectionId/students', studentController.deleteAllStudentsInSection);
+// General Authenticated Routes (Admins, Faculty, and Students)
+router.get('/subjects-day/:yearId/:departmentId/:sectionId/:date', verifyToken(), studentController.getSubjectsByDate);
+router.get('/:rollNumber', verifyToken(), studentController.getStudentByRollNumber);
+router.get('/:yearId/:departmentId/:sectionId/students', verifyToken(), studentController.getStudentsBySection);
+router.get("/:yearId/:departmentId/:sectionId/timetable", verifyToken(), studentController.getSectionTimetable);
 
 module.exports = router;
