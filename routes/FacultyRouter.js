@@ -59,3 +59,4 @@ router.get("/:facultyId/:department/:section/:subject", verifyToken(), getExactP
 router.get("/facultyId/:facultyId/timetable", verifyToken(), getTimetableByFacultyId);
 
 module.exports = router;
+
