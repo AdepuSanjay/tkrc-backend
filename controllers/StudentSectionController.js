@@ -158,21 +158,38 @@ const upsertSectionTimetable = async (req, res) => {
     const sectionData = deptData.sections.find(sec => sec.name === sectionId);
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
-    // STEP 1: CLEANUP - Remove this section's old periods from ALL faculties
+    // ==============================================================================
+    // STEP 1: CLEANUP - BULLETPROOF OVERWRITE
+    // ==============================================================================
     const faculties = await Faculty.find({});
     for (let faculty of faculties) {
         let modified = false;
-        faculty.timetable.forEach(dayObj => {
+        
+        // Convert to plain JS object to bypass Mongoose tracking bugs
+        let currentTimetable = faculty.timetable ? faculty.timetable.toObject() : [];
+        
+        currentTimetable.forEach(dayObj => {
             const initialLength = dayObj.periods.length;
+            // Filter out old periods for this specific section
             dayObj.periods = dayObj.periods.filter(p => 
                 !(p.year === yearId && p.department === departmentId && p.section === sectionId)
             );
             if (dayObj.periods.length !== initialLength) modified = true;
         });
-        if (modified) await faculty.save(); 
+
+        // Optional: Remove days that now have zero periods
+        currentTimetable = currentTimetable.filter(dayObj => dayObj.periods.length > 0);
+
+        if (modified) {
+            faculty.timetable = currentTimetable; // Complete overwrite
+            faculty.markModified('timetable'); 
+            await faculty.save(); 
+        }
     }
 
+    // ==============================================================================
     // STEP 2: PROCESS NEW TIMETABLE & ENRICH DATA
+    // ==============================================================================
     const validatedTimetable = [];
     const facultyUpdates = {}; 
 
@@ -182,10 +199,12 @@ const upsertSectionTimetable = async (req, res) => {
         for (const period of day.periods || []) {
             let facultyName = "Unknown";
             let phoneNumber = "N/A";
-            let facultyId = period.facultyId || null;
+            let facultyId = period.facultyId ? String(period.facultyId).trim() : null;
 
             if (facultyId) {
-                const assignedFaculty = await Faculty.findOne({ facultyId: facultyId });
+                // Case insensitive search to protect against Excel spacing errors
+                const assignedFaculty = await Faculty.findOne({ facultyId: new RegExp(`^${facultyId}$`, 'i') });
+                
                 if (assignedFaculty) {
                     facultyName = assignedFaculty.name;
                     phoneNumber = assignedFaculty.phoneNumber;
@@ -216,30 +235,41 @@ const upsertSectionTimetable = async (req, res) => {
     }
 
     sectionData.timetable = validatedTimetable;
+    yearData.markModified('departments'); 
     await yearData.save();
 
-    // STEP 3: DISTRIBUTE PERIODS TO FACULTY
+    // ==============================================================================
+    // STEP 3: DISTRIBUTE PERIODS TO FACULTY - BULLETPROOF OVERWRITE
+    // ==============================================================================
     for (const fId in facultyUpdates) {
-        const facultyToUpdate = await Faculty.findOne({ facultyId: fId });
+        const facultyToUpdate = await Faculty.findOne({ facultyId: new RegExp(`^${fId}$`, 'i') });
         
         if (facultyToUpdate) {
             const updatesToAdd = facultyUpdates[fId];
+            
+            // Convert to plain JS object
+            let newFacultyTimetable = facultyToUpdate.timetable ? facultyToUpdate.timetable.toObject() : [];
 
             updatesToAdd.forEach(update => {
-                let dayEntry = facultyToUpdate.timetable.find(d => d.day === update.day);
+                let dayIndex = newFacultyTimetable.findIndex(d => d.day === update.day);
                 
-                if (!dayEntry) {
-                    facultyToUpdate.timetable.push({ day: update.day, periods: [] });
-                    dayEntry = facultyToUpdate.timetable[facultyToUpdate.timetable.length - 1];
+                // If the day doesn't exist, create it
+                if (dayIndex === -1) {
+                    newFacultyTimetable.push({ day: update.day, periods: [] });
+                    dayIndex = newFacultyTimetable.length - 1;
                 }
                 
-                dayEntry.periods.push(update.period);
+                newFacultyTimetable[dayIndex].periods.push(update.period);
             });
 
-            facultyToUpdate.timetable.forEach(dayEntry => {
+            // Sort periods chronologically 
+            newFacultyTimetable.forEach(dayEntry => {
                 dayEntry.periods.sort((a, b) => a.periodNumber - b.periodNumber);
             });
 
+            // Reassign the whole array to force Mongoose to save the changes
+            facultyToUpdate.timetable = newFacultyTimetable;
+            facultyToUpdate.markModified('timetable'); 
             await facultyToUpdate.save();
         }
     }
