@@ -1,21 +1,22 @@
 const Year = require("../models/studentSection");
+const Faculty = require("../models/facultymodel"); // REQUIRED FOR AUTO-SYNC
 const path = require("path");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken"); // Added JWT for secure authentication
+const jwt = require("jsonwebtoken"); 
 
 // Get students in a section 
 const getStudentsBySection = async (req, res) => {
   try {
     const { yearId, departmentId, sectionId } = req.params;
 
-    const year = await Year.findOne({ year: yearId });  // Find Year by year string
+    const year = await Year.findOne({ year: yearId });  
     if (!year) return res.status(404).json({ message: "Year not found" });
 
-    const department = year.departments.find(dept => dept.name === departmentId);  // Find department by name
+    const department = year.departments.find(dept => dept.name === departmentId);  
     if (!department) return res.status(404).json({ message: "Department not found" });
 
-    const section = department.sections.find(sec => sec.name === sectionId);  // Find section by name
+    const section = department.sections.find(sec => sec.name === sectionId);  
     if (!section) return res.status(404).json({ message: "Section not found" });
 
     res.status(200).json({ students: section.students });
@@ -28,52 +29,43 @@ const getSubjectsByDate = async (req, res) => {
   try {
     const { yearId, departmentId, sectionId, date } = req.params;
 
-    // Validate the date format (YYYY-MM-DD)
     const targetDate = new Date(date);
     if (isNaN(targetDate.getTime())) {
       return res.status(400).json({ message: "Invalid date format. Please use YYYY-MM-DD." });
     }
 
-    // Determine the day of the week (e.g., "Monday")
     const dayOfWeek = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-    // Fetch the year document
     const yearData = await Year.findOne({ year: yearId });
     if (!yearData) return res.status(404).json({ message: "Year not found" });
 
-    // Find the department within the year
     const deptData = yearData.departments.find(dept => dept.name === departmentId);
     if (!deptData) return res.status(404).json({ message: "Department not found" });
 
-    // Find the section within the department
     const sectionData = deptData.sections.find(sec => sec.name === sectionId);
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
-    // Ensure the section has a timetable
     if (!sectionData.timetable || sectionData.timetable.length === 0) {
       return res.status(404).json({ message: "Timetable not found for this section" });
     }
 
-    // Find the schedule for the specified day
     const daySchedule = sectionData.timetable.find(schedule => schedule.day === dayOfWeek);
     if (!daySchedule) {
       return res.status(404).json({ message: `No timetable found for ${dayOfWeek}` });
     }
 
-    // Period Timings (Excluding Lunch Break)
     const periodTimings = {
       1: "9:40 - 10:40",
       2: "10:40 - 11:40",
       3: "11:40 - 12:40",
-      4: "12:40 - 1:20", // Lunch Break (Excluded)
+      4: "12:40 - 1:20", // Lunch Break
       5: "1:20 - 2:20",
       6: "2:20 - 3:20",
       7: "3:20 - 4:20"
     };
 
-    // Respond with the subjects scheduled for the day (excluding lunch period)
     const periods = daySchedule.periods
-      .filter(period => period.periodNumber !== 4) // Exclude Lunch
+      .filter(period => period.periodNumber !== 4) 
       .map(period => ({
         timing: periodTimings[period.periodNumber] || "Unknown",
         subject: period.subject,
@@ -99,7 +91,6 @@ const addStudentsToSection = async (req, res) => {
     const { yearId, departmentId, sectionId } = req.params;
     let { students } = req.body;
 
-    // ✅ Ensure students is parsed correctly
     if (typeof students === "string") {
       students = JSON.parse(students);
     }
@@ -121,11 +112,8 @@ const addStudentsToSection = async (req, res) => {
       const { rollNumber, name, fatherName, password, role, mobileNumber, fatherMobileNumber } = student;
 
       if (!rollNumber || !name || !password || !mobileNumber) {
-        console.error("Missing required fields in student:", student);
         return res.status(400).json({ message: "Each student must have a rollNumber, name, password, and mobile number." });
       }
-
-      console.log("Adding student:", { rollNumber, name, mobileNumber }); // Debug log
 
       const hashedPassword = await bcrypt.hash(password, 10);
       const imagePath = req.file ? req.file.path : null;
@@ -137,7 +125,7 @@ const addStudentsToSection = async (req, res) => {
         password: hashedPassword,
         role: role || "student",
         image: imagePath,
-        mobileNumber: String(mobileNumber),  // ✅ Ensure it's a string
+        mobileNumber: String(mobileNumber),  
         fatherMobileNumber: fatherMobileNumber ? String(fatherMobileNumber) : null
       });
     }
@@ -149,15 +137,14 @@ const addStudentsToSection = async (req, res) => {
   }
 };
 
-// Add or update a timetable for a section
+// Add or update a timetable for a section and AUTO-SYNC with Faculty
 const upsertSectionTimetable = async (req, res) => {
   try {
     const { yearId, departmentId, sectionId } = req.params;
-    const timetable = req.body; // Now expecting an array directly
+    const timetable = req.body; 
 
-    console.log("Received yearId:", yearId);
+    console.log(`Starting Auto-Sync Timetable for: ${yearId} ${departmentId}-${sectionId}`);
 
-    // Validate that the request body contains an array
     if (!Array.isArray(timetable)) {
       return res.status(400).json({ message: "Invalid timetable data, expected an array." });
     }
@@ -165,29 +152,103 @@ const upsertSectionTimetable = async (req, res) => {
     const yearData = await Year.findOne({ year: yearId });
     if (!yearData) return res.status(404).json({ message: "Year not found" });
 
-    console.log("Year found:", yearData.year);
-
     const deptData = yearData.departments.find(dept => dept.name === departmentId);
     if (!deptData) return res.status(404).json({ message: "Department not found" });
 
     const sectionData = deptData.sections.find(sec => sec.name === sectionId);
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
-    // Ensure each period has a facultyName and phoneNumber
-    const validatedTimetable = timetable.map(day => ({
-      day: day.day,
-      periods: (day.periods || []).map(period => ({
-        periodNumber: period.periodNumber,
-        subject: period.subject,
-        facultyName: period.facultyName || "Unknown", // Default faculty if missing
-        phoneNumber: period.phoneNumber || "N/A", // Default phoneNumber if missing
-      })),
-    }));
+    // STEP 1: CLEANUP - Remove this section's old periods from ALL faculties
+    const faculties = await Faculty.find({});
+    for (let faculty of faculties) {
+        let modified = false;
+        faculty.timetable.forEach(dayObj => {
+            const initialLength = dayObj.periods.length;
+            dayObj.periods = dayObj.periods.filter(p => 
+                !(p.year === yearId && p.department === departmentId && p.section === sectionId)
+            );
+            if (dayObj.periods.length !== initialLength) modified = true;
+        });
+        if (modified) await faculty.save(); 
+    }
+
+    // STEP 2: PROCESS NEW TIMETABLE & ENRICH DATA
+    const validatedTimetable = [];
+    const facultyUpdates = {}; 
+
+    for (const day of timetable) {
+        const validatedDay = { day: day.day, periods: [] };
+
+        for (const period of day.periods || []) {
+            let facultyName = "Unknown";
+            let phoneNumber = "N/A";
+            let facultyId = period.facultyId || null;
+
+            if (facultyId) {
+                const assignedFaculty = await Faculty.findOne({ facultyId: facultyId });
+                if (assignedFaculty) {
+                    facultyName = assignedFaculty.name;
+                    phoneNumber = assignedFaculty.phoneNumber;
+
+                    if (!facultyUpdates[facultyId]) facultyUpdates[facultyId] = [];
+                    facultyUpdates[facultyId].push({
+                        day: day.day,
+                        period: {
+                            periodNumber: period.periodNumber,
+                            subject: period.subject,
+                            year: yearId,
+                            department: departmentId,
+                            section: sectionId
+                        }
+                    });
+                }
+            }
+
+            validatedDay.periods.push({
+                periodNumber: period.periodNumber,
+                subject: period.subject,
+                facultyId: facultyId,
+                facultyName: facultyName,
+                phoneNumber: phoneNumber,
+            });
+        }
+        validatedTimetable.push(validatedDay);
+    }
 
     sectionData.timetable = validatedTimetable;
     await yearData.save();
 
-    res.status(200).json({ message: "Timetable added/updated successfully", timetable: sectionData.timetable });
+    // STEP 3: DISTRIBUTE PERIODS TO FACULTY
+    for (const fId in facultyUpdates) {
+        const facultyToUpdate = await Faculty.findOne({ facultyId: fId });
+        
+        if (facultyToUpdate) {
+            const updatesToAdd = facultyUpdates[fId];
+
+            updatesToAdd.forEach(update => {
+                let dayEntry = facultyToUpdate.timetable.find(d => d.day === update.day);
+                
+                if (!dayEntry) {
+                    facultyToUpdate.timetable.push({ day: update.day, periods: [] });
+                    dayEntry = facultyToUpdate.timetable[facultyToUpdate.timetable.length - 1];
+                }
+                
+                dayEntry.periods.push(update.period);
+            });
+
+            facultyToUpdate.timetable.forEach(dayEntry => {
+                dayEntry.periods.sort((a, b) => a.periodNumber - b.periodNumber);
+            });
+
+            await facultyToUpdate.save();
+        }
+    }
+
+    res.status(200).json({ 
+        message: "Timetable updated and auto-synced with faculty successfully!", 
+        timetable: sectionData.timetable 
+    });
+
   } catch (error) {
     console.error("Error in upsertSectionTimetable:", error.message);
     res.status(500).json({ message: "Error upserting timetable", error: error.message });
@@ -211,10 +272,10 @@ const addYear = async (req, res) => {
 // Add a department to a year
 const addDepartmentToYear = async (req, res) => {
   try {
-    const { yearId } = req.params;  // Example: "B.Tech I"
-    const { name } = req.body;  // Example: "CSE"
+    const { yearId } = req.params;  
+    const { name } = req.body;  
 
-    const year = await Year.findOne({ year: yearId });  // Find Year by year string
+    const year = await Year.findOne({ year: yearId });  
     if (!year) return res.status(404).json({ message: "Year not found" });
 
     year.departments.push({ name, sections: [] });
@@ -229,13 +290,13 @@ const addDepartmentToYear = async (req, res) => {
 // Add a section to a department
 const addSectionToDepartment = async (req, res) => {
   try {
-    const { yearId, departmentId } = req.params;  // Example: "B.Tech I", "CSE"
-    const { name } = req.body;  // Example: "A"
+    const { yearId, departmentId } = req.params;  
+    const { name } = req.body;  
 
-    const year = await Year.findOne({ year: yearId });  // Find Year by year string
+    const year = await Year.findOne({ year: yearId });  
     if (!year) return res.status(404).json({ message: "Year not found" });
 
-    const department = year.departments.find(dept => dept.name === departmentId);  // Find department by name
+    const department = year.departments.find(dept => dept.name === departmentId);  
     if (!department) return res.status(404).json({ message: "Department not found" });
 
     department.sections.push({ name, timetable: [], students: [] });
@@ -247,12 +308,11 @@ const addSectionToDepartment = async (req, res) => {
   }
 };
 
-// Login student (Updated to return a JWT Token)
+// Login student 
 const loginStudent = async (req, res) => {
   try {
     const { rollNumber, password } = req.body;
 
-    // Validate input
     if (!rollNumber || !password) {
       return res.status(400).json({
         success: false,
@@ -260,7 +320,6 @@ const loginStudent = async (req, res) => {
       });
     }
 
-    // Find the student by traversing the Year model
     const yearData = await Year.findOne({
       "departments.sections.students.rollNumber": rollNumber,
     });
@@ -272,7 +331,6 @@ const loginStudent = async (req, res) => {
       });
     }
 
-    // Locate the exact student within the nested structure
     let student = null;
     let year = null;
     let department = null;
@@ -301,7 +359,6 @@ const loginStudent = async (req, res) => {
       });
     }
 
-    // Compare the provided password with the hashed password
     const isMatch = await bcrypt.compare(password, student.password);
 
     if (!isMatch) {
@@ -311,7 +368,6 @@ const loginStudent = async (req, res) => {
       });
     }
 
-    // Generate JWT Token for Student
     const token = jwt.sign(
       { 
         id: student._id, 
@@ -319,14 +375,13 @@ const loginStudent = async (req, res) => {
         rollNumber: student.rollNumber 
       },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" } // Students get a 7-day token
+      { expiresIn: "7d" } 
     );
 
-    // Successful login
     res.status(200).json({
       success: true,
       message: "Login successful",
-      token, // Send token back to the frontend
+      token, 
       student: {
         id: student._id,
         name: student.name,
@@ -365,7 +420,6 @@ const addTimetable = async (req, res) => {
       return res.status(400).json({ message: "Invalid timetable JSON format" });
     }
 
-    // Find the year, department, and section
     const yearData = await Year.findOne({ year });
     if (!yearData) return res.status(404).json({ message: "Year not found" });
 
@@ -375,7 +429,6 @@ const addTimetable = async (req, res) => {
     const sectionData = deptData.sections.find((sec) => sec.name === section);
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
-    // Add the timetable
     sectionData.timetable = parsedTimetable;
 
     await yearData.save();
@@ -401,7 +454,6 @@ const deleteTimetable = async (req, res) => {
     const sectionData = deptData.sections.find((sec) => sec.name === section);
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
-    // Remove the timetable
     sectionData.timetable = [];
 
     await yearData.save();
@@ -416,8 +468,6 @@ const deleteTimetable = async (req, res) => {
 const getSectionTimetable = async (req, res) => {
   try {
     const { yearId, departmentId, sectionId } = req.params;
-
-    console.log("Fetching timetable for:", { yearId, departmentId, sectionId });
 
     const yearData = await Year.findOne({ year: new RegExp(`^${yearId}$`, "i") });
     if (!yearData) return res.status(404).json({ message: "Year not found" });
@@ -439,7 +489,6 @@ const getStudentByRollNumber = async (req, res) => {
   try {
     const { rollNumber } = req.params;
 
-    // Find the year data that contains the student
     const yearData = await Year.findOne({
       "departments.sections.students.rollNumber": rollNumber,
     });
@@ -453,7 +502,6 @@ const getStudentByRollNumber = async (req, res) => {
     let department = null;
     let section = null;
 
-    // Loop through departments and sections to find the student
     for (const dept of yearData.departments) {
       for (const sec of dept.sections) {
         const foundStudent = sec.students.find(
@@ -500,7 +548,7 @@ const deleteStudentByRollNumber = async (req, res) => {
   try {
     const { rollNumber } = req.params;
 
-    const years = await Year.find(); // Fetch all years
+    const years = await Year.find(); 
 
     let studentDeleted = false;
 
@@ -510,8 +558,8 @@ const deleteStudentByRollNumber = async (req, res) => {
           const studentIndex = section.students.findIndex(student => student.rollNumber === rollNumber);
 
           if (studentIndex !== -1) {
-            section.students.splice(studentIndex, 1); // Remove student
-            await year.save(); // Save the modified year document
+            section.students.splice(studentIndex, 1); 
+            await year.save(); 
             studentDeleted = true;
             break;
           }
@@ -546,7 +594,7 @@ const deleteAllStudentsInSection = async (req, res) => {
     const section = department.sections.find((sec) => sec.name === sectionId);
     if (!section) return res.status(404).json({ message: "Section not found" });
 
-    section.students = []; // Remove all students
+    section.students = []; 
     await year.save();
 
     res.status(200).json({ message: "All students deleted successfully" });
@@ -555,7 +603,6 @@ const deleteAllStudentsInSection = async (req, res) => {
     res.status(500).json({ message: "Error deleting all students", error: error.message });
   }
 };
-
 
 module.exports = {
   getStudentsBySection,
