@@ -108,28 +108,37 @@ const addStudentsToSection = async (req, res) => {
     const section = department.sections.find((sec) => sec.name === sectionId);
     if (!section) return res.status(404).json({ message: "Section not found" });
 
-    for (const student of students) {
-      const { rollNumber, name, fatherName, password, role, mobileNumber, fatherMobileNumber } = student;
+    // ==============================================================================
+    // PERMANENT TIMEOUT FIX 1: Hash passwords simultaneously using Promise.all
+    // ==============================================================================
+    const processedStudents = await Promise.all(
+      students.map(async (student) => {
+        const { rollNumber, name, fatherName, password, role, mobileNumber, fatherMobileNumber } = student;
 
-      if (!rollNumber || !name || !password || !mobileNumber) {
-        return res.status(400).json({ message: "Each student must have a rollNumber, name, password, and mobile number." });
-      }
+        if (!rollNumber || !name || !password || !mobileNumber) {
+          throw new Error(`Student ${name || rollNumber || 'Unknown'} is missing required fields.`);
+        }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const imagePath = req.file ? req.file.path : null;
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const imagePath = req.file ? req.file.path : null;
 
-      section.students.push({
-        rollNumber,
-        name,
-        fatherName: fatherName || null,
-        password: hashedPassword,
-        role: role || "student",
-        image: imagePath,
-        mobileNumber: String(mobileNumber),  
-        fatherMobileNumber: fatherMobileNumber ? String(fatherMobileNumber) : null
-      });
-    }
+        return {
+          rollNumber,
+          name,
+          fatherName: fatherName || null,
+          password: hashedPassword,
+          role: role || "student",
+          image: imagePath,
+          mobileNumber: String(mobileNumber),  
+          fatherMobileNumber: fatherMobileNumber ? String(fatherMobileNumber) : null
+        };
+      })
+    );
+
+    // Push all processed students at once
+    section.students.push(...processedStudents);
     await year.save();
+
     res.status(201).json({ message: "Students added successfully", section });
   } catch (error) {
     console.error("Error adding students:", error.message);
@@ -159,37 +168,37 @@ const upsertSectionTimetable = async (req, res) => {
     if (!sectionData) return res.status(404).json({ message: "Section not found" });
 
     // ==============================================================================
-    // STEP 1: CLEANUP - BULLETPROOF OVERWRITE
+    // PERMANENT TIMEOUT FIX 2: Pre-fetch ALL faculties to avoid loops inside DB queries
     // ==============================================================================
-    const faculties = await Faculty.find({});
-    for (let faculty of faculties) {
+    const allFaculties = await Faculty.find({}); 
+    const cleanupPromises = []; // Store DB saves to execute concurrently
+
+    // STEP 1: CLEANUP - BULLETPROOF OVERWRITE
+    for (let faculty of allFaculties) {
         let modified = false;
-        
-        // Convert to plain JS object to bypass Mongoose tracking bugs
         let currentTimetable = faculty.timetable ? faculty.timetable.toObject() : [];
-        
+
         currentTimetable.forEach(dayObj => {
             const initialLength = dayObj.periods.length;
-            // Filter out old periods for this specific section
             dayObj.periods = dayObj.periods.filter(p => 
                 !(p.year === yearId && p.department === departmentId && p.section === sectionId)
             );
             if (dayObj.periods.length !== initialLength) modified = true;
         });
 
-        // Optional: Remove days that now have zero periods
         currentTimetable = currentTimetable.filter(dayObj => dayObj.periods.length > 0);
 
         if (modified) {
-            faculty.timetable = currentTimetable; // Complete overwrite
+            faculty.timetable = currentTimetable; 
             faculty.markModified('timetable'); 
-            await faculty.save(); 
+            // DO NOT AWAIT HERE. Push to array.
+            cleanupPromises.push(faculty.save()); 
         }
     }
+    // Execute all cleanup DB writes at the exact same time
+    await Promise.all(cleanupPromises);
 
-    // ==============================================================================
     // STEP 2: PROCESS NEW TIMETABLE & ENRICH DATA
-    // ==============================================================================
     const validatedTimetable = [];
     const facultyUpdates = {}; 
 
@@ -202,9 +211,11 @@ const upsertSectionTimetable = async (req, res) => {
             let facultyId = period.facultyId ? String(period.facultyId).trim() : null;
 
             if (facultyId) {
-                // Case insensitive search to protect against Excel spacing errors
-                const assignedFaculty = await Faculty.findOne({ facultyId: new RegExp(`^${facultyId}$`, 'i') });
-                
+                // Fetch from MEMORY (allFaculties), NOT the database. Extremely fast.
+                const assignedFaculty = allFaculties.find(
+                  (f) => f.facultyId.toLowerCase() === facultyId.toLowerCase()
+                );
+
                 if (assignedFaculty) {
                     facultyName = assignedFaculty.name;
                     phoneNumber = assignedFaculty.phoneNumber;
@@ -238,41 +249,41 @@ const upsertSectionTimetable = async (req, res) => {
     yearData.markModified('departments'); 
     await yearData.save();
 
-    // ==============================================================================
     // STEP 3: DISTRIBUTE PERIODS TO FACULTY - BULLETPROOF OVERWRITE
-    // ==============================================================================
+    const distributionPromises = []; // Store updates to execute concurrently
+
     for (const fId in facultyUpdates) {
-        const facultyToUpdate = await Faculty.findOne({ facultyId: new RegExp(`^${fId}$`, 'i') });
-        
+        // Fetch from MEMORY, NOT the database.
+        const facultyToUpdate = allFaculties.find(
+          (f) => f.facultyId.toLowerCase() === fId.toLowerCase()
+        );
+
         if (facultyToUpdate) {
             const updatesToAdd = facultyUpdates[fId];
-            
-            // Convert to plain JS object
             let newFacultyTimetable = facultyToUpdate.timetable ? facultyToUpdate.timetable.toObject() : [];
 
             updatesToAdd.forEach(update => {
                 let dayIndex = newFacultyTimetable.findIndex(d => d.day === update.day);
-                
-                // If the day doesn't exist, create it
                 if (dayIndex === -1) {
                     newFacultyTimetable.push({ day: update.day, periods: [] });
                     dayIndex = newFacultyTimetable.length - 1;
                 }
-                
                 newFacultyTimetable[dayIndex].periods.push(update.period);
             });
 
-            // Sort periods chronologically 
             newFacultyTimetable.forEach(dayEntry => {
                 dayEntry.periods.sort((a, b) => a.periodNumber - b.periodNumber);
             });
 
-            // Reassign the whole array to force Mongoose to save the changes
             facultyToUpdate.timetable = newFacultyTimetable;
             facultyToUpdate.markModified('timetable'); 
-            await facultyToUpdate.save();
+            
+            // DO NOT AWAIT HERE. Push to array.
+            distributionPromises.push(facultyToUpdate.save());
         }
     }
+    // Execute all faculty sync DB writes at the exact same time
+    await Promise.all(distributionPromises);
 
     res.status(200).json({ 
         message: "Timetable updated and auto-synced with faculty successfully!", 
