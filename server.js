@@ -8,7 +8,7 @@ const sendAbsentNotifications = require("./Twilio.js");
 const multer = require('multer');
 const cloudinary = require('./cloudnaryConfig.js'); 
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
- 
+
 // Import your route files (Make sure AdminRoute is here!)
 const AdminRoute = require("./routes/AdminRouter"); 
 const facultyroutes = require("./routes/FacultyRouter");
@@ -70,13 +70,33 @@ app.post('/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// MongoDB connection (Secured with environment variable)
-mongoose
-  .connect(process.env.MONGO_URI || "mongodb+srv://tkrcet:abc1234@cluster0.y4apc.mongodb.net/tkrcet")
-  .then(() => console.log("MongoDB connected successfully"))
-  .catch((error) => console.error("MongoDB connection failed:", error.message));
+// ==========================================
+// VERCEL OPTIMIZED MONGODB CONNECTION CACHING
+// ==========================================
+let isConnected = false; // Track connection status globally
 
-// Define API routes (THIS FIXES YOUR "ROUTE NOT FOUND" ERROR)
+const connectDB = async () => {
+  mongoose.set("strictQuery", true);
+  
+  if (isConnected) {
+    console.log("=> Using existing database connection");
+    return;
+  }
+
+  try {
+    const db = await mongoose.connect(process.env.MONGO_URI || "mongodb+srv://tkrcet:abc1234@cluster0.y4apc.mongodb.net/tkrcet");
+    isConnected = db.connections[0].readyState === 1;
+    console.log("=> MongoDB connected successfully");
+  } catch (error) {
+    console.error("=> MongoDB connection failed:", error.message);
+  }
+};
+
+// Initialize connection
+connectDB();
+// ==========================================
+
+// Define API routes 
 app.use("/admin", AdminRoute); 
 app.use("/faculty", facultyroutes);
 app.use("/Attendance", AttendanceRoute);
